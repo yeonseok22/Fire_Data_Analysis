@@ -119,13 +119,147 @@ fire <- ts(data, start=c(1997,1), end=c(2019,4), frequency = 4)  # 시계열 자
   ![image](https://user-images.githubusercontent.com/49339278/147551569-db542a78-cbd0-4893-944d-912638e54b31.png)
   ![image](https://user-images.githubusercontent.com/49339278/147551448-3c493ab7-75c2-43ff-a345-880b16f37915.png)
 
+- ```Dicky-Fuller 단위근 검정```을 실시한다.
+  ```R
+  adf.test(dif_14)
+  ```
+  ![image](https://user-images.githubusercontent.com/49339278/147567891-bd4167c8-361d-4106-a0e5-6d2e59f848ec.png)
+
+- ```Dicky-Fuller 단위근 검정```에서 p-value가 0.05보다 크므로 귀무가설을 기각하였다. 따라서 정상성을 만족한다고 할 수 있다.
+- ```AR(p)``` 모형의 적절한 p 매개변수를 추정하기 위해 spacf를 식별한다.
+  ```R
+  sacf <- acf[1,] ; spacf <- acf[2,]   # SACF, SPACF
+  pacf(dif_14, lag.max = 36)
+  ```
+  ![image](https://user-images.githubusercontent.com/49339278/147568158-32d09e07-102b-4590-ba0c-342a832bd5e6.png) 
+  - SPACF 식별법은 다음과 같다.
+  - ![image](https://user-images.githubusercontent.com/49339278/147568139-06d55911-9b36-4299-8e04-e6cc5f133816.png)
+
+  ```R
+  se1 <- 1.96 /sqrt(length(dif_14)) # S.E
+  check1 <- ifelse(abs(spacf) <= se1 , '채택', '기각') 
+  estimated.ar <- t(as.matrix(data.frame(spacf, check1))) ; estimated.ar
+  ```
+  - ![image](https://user-images.githubusercontent.com/49339278/147568235-fa1dc49d-ef32-4595-8022-c16d393530e9.png)
+  - 결과 : V17 이후의 값은 표준오차보다 작기 때문에 ```AR(3)``` 과정을 적합하는 것을 고려해 보는 것으로 결정한다.
+
+  - ```MA(q)``` 모형의 적절한 q 매개변수를 추정하기 위해 sacf를 식별한다.
+  - ![image](https://user-images.githubusercontent.com/49339278/147568388-88e7cee4-bc82-4a82-934d-7cab91c6aa07.png)
+  ```R
+  se2 <- rep(0,36)
+  se2[1] <- 1/length(dif_14)
+  for (i in 1:36) {
+    se2[i+1] <- se2[i] + (2*(sacf[i]^2))/length(dif_14)
+  };se2 <- sqrt(se2[1:36]);se2 # S.E(rho_k.hat) 계산
+  ```
+  ![image](https://user-images.githubusercontent.com/49339278/147568420-f723cbd0-e633-4503-99d3-7fa9995ea8dd.png)
+
+  ```R
+  check2 <- ifelse(abs(sacf) >= 1.96 * se2, '기각', '채택') 
+  estimated.ma <- t(as.matrix(data.frame(sacf, check2))) ; View(estimated.ma)
+  acf(dif_14, lag.max=36)
+  ```
+  ![image](https://user-images.githubusercontent.com/49339278/147568435-64465897-c8e5-4576-8a10-41615578e0e7.png)
+  ![image](https://user-images.githubusercontent.com/49339278/147568437-6a041a61-cf5c-45da-8c51-8cb2c6c46fba.png)
+  - 결과 : V5 이후로 0으로의 절단 형태가 나타나므로 ```MA(1)```를 적합하는 것을 고려해 보는 것으로 결정한다.
+
+- 간결의 원칙을 고려하였을 때, 간단한 모형인 ```MA(1)```을 적합하는 것으로 결정하였다.
 
 ### 4. 모형의 추정
+- 모형 1 : 로그변환한 ![image](https://user-images.githubusercontent.com/49339278/147568522-8a816920-a7fb-4492-baa3-4075fef26641.png) 적용하기
+  ```R
+  fit1 <- arima(lgfire, c(0,1,1), seasonal = list(order=c(0, 1, 0), period=4))
+  fit
+  coeftest(fit1, df=length(fit1))
+  ```
+  ![image](https://user-images.githubusercontent.com/49339278/147568598-dd35cdb7-b0cf-45e7-b54e-ed71080bb91d.png)
+
+- 모형 2 : 로그변환 후 1차 차분하고 계절차분 실시한 ```ARIMA(3,1,0), (0,1,0)_4``` 적용
+  ```R
+  fit2 <- arima(lgfire, c(3,1,0), seasonal=list(order=c(0,1,0), period=4))
+  fit2
+  coeftest(fit2, df=length(fit2))
+  ```
+  ![image](https://user-images.githubusercontent.com/49339278/147568719-87ce1f54-aac7-47c6-8e27-c1b6df1e18c2.png)
+
+- 결과 : 모형 1과 모형 2를 고려하였을 때, 모형 1에서 모수 t값은 ![image](https://user-images.githubusercontent.com/49339278/147568754-aefc5bc5-ae07-437b-aa04-edddb91edaeb.png)으로 유의하지만, 모형 2의 두 번째 모수와 세 번째 모수는 0.12583과 0.08261으로 유의하지 않다. 또한 분산을 비교해 보았을 때, 모형 1(0.9628)이 모형 2(1.118)보다 분산이 작은 것을 알 수 있다.
+
+- 모형 적합 결과
+
+|모수|추정값|표준오차|t-값|유의확률|
+|:--:|:--:|:--:|:---:|:--:|
+|![image](https://user-images.githubusercontent.com/49339278/147568874-62d738ee-81d7-4722-8edf-6a96caf7e2a1.png)|-0.999999|0.033316|-30.017|4.14e-14|
+
+- 따라서 적합된 모형은 다음과 같다.
+![image](https://user-images.githubusercontent.com/49339278/147568933-c19cfc14-3cab-4403-b552-272dc2c1a93e.png)
+
 
 ### 5. 모형의 진단
+- 방법 1
+  ```R
+  # dev.off()
+  par(mfrow=c(2,3))
+  ts.plot(resid(fit1),main = '잔차 시계열그림', type='o');abline(h=0) # 시계열그림
+  acf(resid(fit1), main = 'Residuals SACF');pacf(resid(fit), main = 'Residuals SPACF')
+  qqnorm(resid(fit1), main = '잔차 정규성검정');qqline(resid(fit1), col='blue')
+
+  pvalue <- rep(0,24)
+  for (i in 1:24) {pvalue[i] <- Box.test(resid(fit1),i, type='Lj')$p.value} # 포트맨토검정 
+  plot(1:24, pvalue, xlab = 'Time', ylim= c(-0.1, 1.0), main = '포트맨토 검정')
+  ```
+  ![image](https://user-images.githubusercontent.com/49339278/147568966-9961b7a3-411b-4df5-be31-99d264f80bc2.png)
+
+  ```R
+  jarque.bera.test(resid(fit1)) # Jarque-Bera 검정통계량 이용
+  ```
+  ![image](https://user-images.githubusercontent.com/49339278/147568980-61e43d67-0dd9-45c6-8c1e-830d5937af66.png)
+
+- 정규성검정 결과로는 뒷부분을 제외하고 거의 직선상에 위치하기 때문에 정규분포를 따른다고 볼 수 있다.
+- Jarque-Bera 검정통계량 이용한 정규성검정에서 p-value가 0.05보다 큰 값이 나왔기 때문에 귀무가설을 기각할 수 없고, 따라서 정규분포라고 할 수 있다.
+- 포트멘토검정 결과, 시차1, 2, 3에서 유의확률 0.05 이상이므로 오차들이 백색잡음과정이라는 귀무가설을 기각할 수 없어 ARIMA(0,1,1), (0,1,0)_4모형이 적합하다고 판단할 수 있다.
+- 백색잡음 가정 확인을 위하여 잔차의 시계열그림과 잔차의 표본자기상관계수(residual SACF ; RSACF)와 잔차의 표본부분자기상관계수(residual SPACF ; RSPACF)을 확인해야 한다. 여기서 잔차시계열이 백색잡음과정을 따른다면 RSACF와 RSPACF가 모든 시차에서 0과 가까운 값을 가져야 하지만, 그렇지 않기 때문에 백색잡음과정에 해당하지 않는다. 그리고 잔차의 산점도를 보았을 때 회귀모형에 부가된 가정에 위배되지 않아 모형 선택이 적절하다.
+
+- 방법 2
+  ```R
+  sarima(lgfire, 0, 1, 1, D=1, S=4)
+  ```
+  ![image](https://user-images.githubusercontent.com/49339278/147569026-7de0d6f7-c3d5-4928-ae14-a3dda10e0976.png)
+  ![image](https://user-images.githubusercontent.com/49339278/147569031-2edc9641-3fdc-4c72-ad28-ecd5d69c7a4c.png)
+  ![image](https://user-images.githubusercontent.com/49339278/147569036-abf24b4d-c844-4e2c-95da-8da64989bcc1.png)
+  - QQplot으로 정규성 검증을 다시 확인해 본 결과, 방법 1에서의 QQplot보다 더 자세한 결과가 출력이 되었다.
+
 
 ### 6. 과대적합
+- 모형 3 : 로그변환한 ```ARIMA(0,1,2),(0,1,0)_4``` 적용하기 # 과대 적합
+  ```R
+  fit3 <- arima(lgfire, c(0,1,2), seasonal = list(order=c(0,1,0), period=4))
+  fit3
+  coeftest(fit3, df=length(fit3))
+  ```
+  ![image](https://user-images.githubusercontent.com/49339278/147569142-20a13cf9-c1ce-4ce2-9fcd-1028146e0867.png)
 
+- 모형 4 : 로그변환한 ```ARIMA(1,1,1), (0,1,0)_4 적용하기 # 과대 적합
+  ```R
+  fit4 <- arima(lgfire, c(1,1,1), seasonal = list(order=c(0,1,0), period=4))
+  fit4 ; coeftest(fit4, df=length(fit4))
+  ```
+ ![image](https://user-images.githubusercontent.com/49339278/147569192-88fbf20d-b692-420f-84f1-03da9adc6395.png)
+ 
 ### 7. 결론
+- AIC 값 비교하기
+  ```R
+  aic <- c(fit1$aic, fit2$aic, fit3$aic, fit4$aic) ; aic
+  ```
+  ![image](https://user-images.githubusercontent.com/49339278/147569229-e544eb6f-af2f-4758-b857-b7b849de9628.png)
+
+- BIC 값 비교하기
+  - 모형 1 : 2.855631, 모형 2 : 3.056111, 모형 3 : 2.891062, 모형 4 : 2.889166
+
+- AIC와 BIC를 비교한 결과, 로그변환 후, ```ARIMA(0,1,1),(0,1,0)_4```을 적용한 모형이 가장 작았다.
+
+- 따라서 최종적인 예측모형으로 ![image](https://user-images.githubusercontent.com/49339278/147569337-1c0e2899-5564-4187-bbab-767e01dd089a.png)을 선택하였다.
 
 ### 8. 참고자료
+- SAS/ETS와 R을 이용한 시계열분석 (저자 : 조신섭)
+- [대전CBS 고형석 기자, 강원도 고성 등 대형 산불 피해 복구 703억 투입  (검색 : 2020.06.07.)](https://www.nocutnews.co.kr/news/5353254)
+- 시계열 분석할 자료 : 1997년부터 2019년 계절별 산불발생 현황(출처 : kosis 국가통계포털)
