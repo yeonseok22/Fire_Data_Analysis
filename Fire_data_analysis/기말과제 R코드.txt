@@ -1,0 +1,116 @@
+#install.packages('astsa')
+#install.packages('lmtest')
+#install.packages('tseries') 
+
+library(astsa)
+library(lmtest)
+library(tseries)   
+
+
+dir <- choose.dir()
+setwd(dir)
+data <- read.table('계절별 산불발생 현황.txt', header=T, fileEncoding= 'utf-8') ; data # raw data
+data <- data[, -2:-1] # 계절별, 기간별 표시 제거
+data <- unlist(data,use.names	=FALSE); View(data)  # 시계열자료로 변환 위해 데이터 변환 실시
+fire <- ts(data, start=c(1997,1), end=c(2019,4), frequency=4) # 시계열자료로 변환
+
+##################################### 모형의 식별 ###########################################
+# 단계 1 : 시계열그림과 표본상관도표 이용
+ts.plot(fire, xlim=c(1997,2020), xlab = 'year') # 시계열그림
+acf2(fire)
+
+# 변동폭이 크기 때문에 분산안전화 변환을 하기 위해 로그변환을 실시할 것이다.
+lgfire <- log(fire)
+ts.plot(lgfire, xlim=c(1997,2020), xlab='year')
+acf2(lgfire, max.lag=36)
+
+# 추세 구분법 : Dickey-Fuller 단위근 검정 실시
+# adf.test 방법 사용
+adf.test(lgfire)  # 단위근 검정에서 p-value가 0.05보다 크므로 귀무가설을 채택하였다.
+			# 정상성을 가진다고 할 수 없다.
+
+# 그러므로 차분을 실시해 보는 것으로 하자
+dif_1 <- diff(lgfire)
+ts.plot(dif_1, xlab='year')
+acf2(dif_1, max.lag=36)
+
+# 주기가 4인 계절성분을 가지고 있기 때문에 계절차분을 실시한다.
+dif_14 <- diff(dif_1, lag=4)
+ts.plot(dif_14, xlab='year')
+acf <- acf2(dif_14, max.lag=36) ; acf
+
+# ADF 단위근 검정 실시
+adf.test(dif_14)	# 정상성을 만족한다.
+
+# spacf 식별하기(AR(p)의 적정한 p 추정)
+sacf <- acf[1,];spacf <- acf[2,]		# SACF, SPACF
+
+pacf(dif_14, lag.max=36)
+
+se1 <- 1.96 /sqrt(length(dif_14)) # S.E
+check1 <- ifelse(abs(spacf) <= se1 , '채택', '기각')
+
+estimated.ar <- t(as.matrix(data.frame(spacf, check1))) ; View(estimated.ar) 
+# AR(3) 과정 고려해 보기
+
+# sacf 식별하기 (MA(q)의 적정한 q 추정)
+se2 <- rep(0,36)
+se2[1] <- 1/length(dif_14)
+for (i in 1:36) {
+	se2[i+1] <- se2[i] + (2*(sacf[i]^2))/length(dif_14)
+};se2 <- sqrt(se2[1:36]);se2 # S.E(rho_k.hat) 계산
+
+check2 <- ifelse(abs(sacf) >= 1.96 * se2, '기각', '채택') 
+
+estimated.ma <- t(as.matrix(data.frame(sacf, check2))) ; View(estimated.ma)
+acf(dif_14, lag.max=36)
+ # MA(1) 과정 고려해 보기
+# 간결의 원칙을 고려하였을 때, MA(1) 과정을 적용하는 것이 적절한 것 같다.
+############################################################################################
+
+############################### 모형의 추정 ###################################################
+# 모형 1 : 로그변환한 ARIMA(0,1,1),(0,1,0)_4 적용하기
+fit1 <- arima(lgfire, c(0,1,1), seasonal = list(order=c(0,1,0), period=4))
+fit1
+coeftest(fit1, df=length(fit1))
+
+# 모형 2 : 로그변환 후 1차 차분하고 계절차분 실시한 ARIMA(3,1,0), (0,1,0)_4 적용
+fit2 <- arima(lgfire, c(3,1,0), seasonal=list(order=c(0,1,0),period=4))
+fit2
+coeftest(fit2, df=length(fit2))
+
+# 모수의 추정 # 로그변환 후 ARIMA(0,1,1),(0,1,0)_4 을 적용한 모형을 도입
+
+# 모형의 진단
+# 방법 1
+# dev.off()
+par(mfrow=c(2,3))
+ts.plot(resid(fit1),main = '잔차 시계열그림', type='o');abline(h=0) # 시계열그림
+acf(resid(fit1), main = 'Residuals SACF');pacf(resid(fit), main = 'Residuals SPACF')
+qqnorm(resid(fit1), main = '잔차 정규성검정');qqline(resid(fit1), col='blue')
+
+pvalue <- rep(0,24)
+for (i in 1:24) {pvalue[i] <- Box.test(resid(fit1),i, type='Lj')$p.value} # 포트맨토검정 
+plot(1:24, pvalue, xlab = 'Time', ylim= c(-0.1, 1.0), main = '포트맨토 검정')
+
+jarque.bera.test(resid(fit1))
+# p-value가 0.05보다 크기 때문에 귀무가설을 기각할 수 없고, 따라서 정규분포라고 할 수 있다.
+
+# 방법 2
+sarima(lgfire, 0, 1, 1, D=1, S=4)
+
+# 잔차분석
+
+# 과대적합
+# 모형 3 : 로그변환한 ARIMA(0,1,2),(0,1,0)_4 적용하기 # 과대 적합
+fit3 <- arima(lgfire, c(0,1,2), seasonal = list(order=c(0,1,0), period=4))
+fit3
+coeftest(fit3, df=length(fit3))
+
+# 모형 4 : 로그변환한 ARIMA(1,1,1), (0,1,0)_4 적용하기 # 과대적합
+fit4 <- arima(lgfire, c(1,1,1), seasonal = list(order=c(0,1,0), period=4))
+fit4 ; coeftest(fit4, df=length(fit4))
+
+# aic값 비교하기
+aic <- c(fit1$aic, fit2$aic, fit3$aic, fit4$aic) ; aic
+###########################################################################################
